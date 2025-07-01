@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package com.zivyou.tools.proto.demo;
+
+option java_multiple_files = true;
+
+// This proto file define the Capability Set of MPort3
+//
+// Refs to doc:
+// https://km.sankuai.com/collabpage/2715844070
+
+// The Capability set of MPort3.
+message CapSet {
+  // The Capability flag of MPort3, this define used with bitmap format.
+  enum Flags {
+    FLAGS_UNSPECIFIED = 0;
+
+    // MPort3 supports drone landing and takeoff, depends on the proper
+    // functioning of MPort3's alignment device and no positional interference
+    // between the robotic arm and the drone.
+    FLAGS_LAND_TAKEOFF = 0x01;
+
+    // MPort3 supports the completion of docking tasks for drones, depends on
+    // the proper functioning of MPort3's alignment device, platform, robotic
+    // arm, and RGV.
+    FLAGS_DOCK_MISSION = 0x02;
+
+    // MPort3 supports the availability of cache grids, depends on the proper
+    // functioning of the robotic arm and RGV.
+    FLAGS_CACHE_GRID_OP = 0x04;
+  }
+
+  // The Capability flags.
+  // Here use the uint32 integer type to represent bit flags.
+  // Each bit can represent a specific flag, which can be set and checked
+  // through bit operations.
+  uint32 flags = 1;
+}
