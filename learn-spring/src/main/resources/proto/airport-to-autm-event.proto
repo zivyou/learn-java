@@ -1,0 +1,75 @@
+syntax = 'proto3';
+
+import public "google/protobuf/empty.proto";
+import public "google/protobuf/timestamp.proto";
+
+message AirportOperatingStateSwitchEvent {
+  int32 from = 2; // 运营状态从from切换为to，其中，1代表运营中，0代表不运营
+  int32 to = 3;
+}
+
+message AirportEvent {
+  string airport_id = 1;
+  oneof event {
+    AirportOperatingStateSwitchEvent airport_operating_state_switch_event = 2; // 机场运营状态切换
+  }
+}
+
+message LandingSupportedStateSwitchEvent {
+  int32 from = 2; // 跑道是否可降落状态从from切换为to，其中1代表可降落，0代表不可降落;
+  int32 to = 3;
+}
+
+message RunwayOccupiedEvent {
+  google.protobuf.Timestamp occupied_at = 1; // 跑道是在什么时候被占住的
+  int32 occupied_by = 2; // 跑道是被什么占住的? 0代表飞机，1代表障碍物
+}
+
+message RunwayClearEvent {
+  google.protobuf.Timestamp clear_at = 1; // 跑道是在什么时候清空的
+  int32 occupied_by = 2; // 清空之前跑道是被什么占住的? 0代表飞机，1代表障碍物
+}
+
+enum GroundMissionType {
+  GMT_UNKNOWN = 0;
+  // 挂餐、抛餐、换电、烘干、放飞等等
+  GMT_MOUNT = 1;  // 挂餐
+  GMT_UNMOUNT = 2; // 抛餐
+  GMT_REPLACE_BATTERY = 3; // 换电
+  GMT_DRY = 4;   // 烘干
+  GMT_RELEASE_DRONE = 5; // 放飞
+}
+
+enum BoxType {
+  BOX_TYPE1 = 0;
+}
+
+enum DroneType {
+  DRONE_TYPE1 = 0;
+}
+
+message GroundMission {
+  GroundMissionType type = 1;
+  int64 time_cost = 2;  // 该地面任务默认的时间开销
+  int64 monetary_price = 3; // 该地面任务默认的金钱开销
+  oneof args {
+    BoxType box_type = 4;
+    DroneType drone_type = 5;
+  }
+}
+
+message RunwayEvent {
+  string airport_id = 1;
+  string runway_id = 2;
+  repeated GroundMission current_supported_ground_mission = 3;
+  oneof event {
+    LandingSupportedStateSwitchEvent landing_supported_state_switch_event = 4; // 跑道是否可降落状态切换
+    RunwayOccupiedEvent runway_occupied_event = 5; // 跑道占用事件
+    RunwayClearEvent runway_clear_event = 6; // 跑道清空事件
+  }
+}
+
+service AUTMAirportService {
+  rpc onAirportEvent(AirportEvent) returns (google.protobuf.Empty);
+  rpc onRunwayEvent(RunwayEvent) returns (google.protobuf.Empty);
+}

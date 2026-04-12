@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.zivyou</groupId>
+    <artifactId>learn-java</artifactId>
+    <packaging>pom</packaging>
+    <version>1.0-SNAPSHOT</version>
+    <modules>
+        <module>common</module>
+        <module>learn-annotation</module>
+        <module>learn-command-pattern</module>
+        <module>learn-concurrent-lib</module>
+        <module>learn-annotation</module>
+        <module>learn-ds</module>
+        <module>learn-flowable</module>
+        <module>learn-javafx</module>
+        <module>learn-juc</module>
+        <module>learn-kafka</module>
+        <module>learn-netty</module>
+        <module>learn-paho-mqtt</module>
+        <module>learn-paxos</module>
+        <module>learn-protobuf</module>
+        <module>learn-reactor</module>
+        <module>learn-redis</module>
+        <module>learn-seata</module>
+        <module>learn-spring</module>
+        <module>learn-spring-ddd</module>
+        <module>learn-spring-redis</module>
+        <module>learn-time-range-crud</module>
+        <module>learn-zookeeper</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+</project>

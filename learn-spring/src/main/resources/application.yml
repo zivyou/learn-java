@@ -1,0 +1,4 @@
+
+env-name: alpha
+
+myconfig: "${env-name}-hello"

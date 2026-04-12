@@ -1,0 +1,115 @@
+syntax = 'proto3';
+
+import public "google/protobuf/empty.proto";
+import public "google/protobuf/timestamp.proto";
+
+message AirportRegisterRequest {
+  string id = 1;  // 运营人内部的机场id
+  string name = 2; // 名字
+  string operator_label = 3; //运营人标识
+}
+
+message AirportRegisterResponse {
+  int32 code = 1;
+  string message = 2;
+  string airport_id = 3;  // A-UTM分配的UUID
+}
+
+message AirportUnregisterRequest {
+  string airport_id = 1;  // A-UTM分配的UUID
+}
+
+message AirportUnregisterResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+message RunwayMetaInfo {
+  enum RunwayType {
+    RT_UNKNOWN = 0;
+    ROTOR = 1;  // 旋翼飞机
+    FIXED_WING = 2; // 固定翼飞机
+  }
+  enum GeometryType { // 跑道几何描述
+    GT_UNKNOWN = 0;
+    DEFAULT_POINT = 1; // 点
+    DEFAULT_CYLINDER = 2; // 圆柱
+  }
+  RunwayType runway_type = 1;
+  GeometryType geometry_type = 2;
+  map<string, double> parameters = 3;  // 不同几何描述下的参数列表
+}
+
+message RunwayRegisterRequest {
+  string airport_id = 1; // A-UTM分配的UUID，这个字段用来说明当前跑道想注册到哪个机场下
+  string id = 2; // 运营人内部给runway的编号;
+  string name = 3;
+  string operator_label = 4;
+  RunwayMetaInfo runway_meta_info = 5;
+}
+
+message RunwaysRegisterRequest {
+  repeated RunwayRegisterRequest runway_register_request = 1;
+}
+
+message RunwayRegisterResponse {
+  int32 code = 1;
+  string message = 2;
+  string runway_uuid = 3;  // A-UTM分配的UUID
+}
+
+message RunwaysRegisterResponse {
+  int32 code = 1;
+  repeated RunwayRegisterResponse runway_register_response = 2;
+}
+
+message RunwayUnregisterRequest {
+  string airport_uuid = 1;
+  string runway_uuid = 2;
+}
+
+message RunwayUnregisterResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+message updateRunwayAttributesRequest {
+  enum GroundMissionType {
+    GMT_UNKNOWN = 0;
+    // 挂餐、抛餐、换电、烘干、放飞等等
+    GMT_MOUNT = 1;  // 挂餐
+    GMT_UNMOUNT = 2; // 抛餐
+    GMT_REPLACE_BATTERY = 3; // 换电
+    GMT_DRY = 4;   // 烘干
+    GMT_RELEASE_DRONE = 5; // 放飞
+  }
+
+  message GroundMission {
+    GroundMissionType type = 1;
+    int64 time_cost = 2;  // 该地面任务默认的时间开销
+    int64 monetary_price = 3; // 该地面任务默认的金钱开销
+  }
+  string runway_uuid = 1;
+  repeated string limited_moving_path = 2;  // 描述跑道连通情况的邻接表
+  repeated GroundMission supported_ground_mission = 3; // 支持的地面任务列表
+  bool land_supported = 4;  // 是否支持降落
+  bool takeoff_supported = 5; // 是否支持起飞
+  int32 drone_capability = 6; // 可以收纳多少飞机。注意: 只有跑道有降落能力的时候才有意义。
+  bool supply_drone = 7; // 这个跑道是否有飞机供应，如果没有，就需要从其他地方调飞机过来。注意: 只有跑道有起飞能力时有意义
+  int64 longest_strand_time = 8; // (in second) 机场放飞后，机场允许的飞机最长滞留时间，超时可能触发异常。注意: 只有跑道有起飞能力时有意义
+  int64 prefer_land_interval = 9; // (in second) 期望的飞机降落间隔。注意: 只有跑道有降落能力时有意义
+}
+
+message UpdateRunwayAttributesResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+service AirportRegisterService {
+  rpc registerAirport(AirportRegisterRequest) returns (AirportRegisterResponse);
+  rpc unregisterAirport(AirportUnregisterRequest) returns (AirportUnregisterResponse);
+  rpc registerRunway(RunwayRegisterRequest) returns (RunwayRegisterResponse);
+  rpc registerRunways(RunwaysRegisterRequest) returns (RunwaysRegisterResponse);
+  rpc unregisterRunway(RunwayUnregisterRequest) returns (RunwayUnregisterResponse);
+  rpc updateRunwayAttributes(updateRunwayAttributesRequest) returns (UpdateRunwayAttributesResponse);
+}

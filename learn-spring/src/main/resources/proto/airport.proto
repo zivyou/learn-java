@@ -1,0 +1,165 @@
+syntax = 'proto3';
+
+import public "google/protobuf/empty.proto";
+import public "google/protobuf/timestamp.proto";
+
+enum GroundMissionType {
+  GMT_UNKNOWN = 0;
+  // 挂餐、抛餐、换电、烘干、放飞等等
+  GMT_MOUNT = 1;  // 挂餐
+  GMT_UNMOUNT = 2; // 抛餐
+  GMT_REPLACE_BATTERY = 3; // 换电
+  GMT_DRY = 4;   // 烘干
+  GMT_RELEASE_DRONE = 5; // 放飞
+}
+
+enum BoxType {
+  BOX_TYPE1 = 0;
+}
+
+enum DroneType {
+  DRONE_TYPE1 = 0;
+}
+
+message GroundMission {
+  GroundMissionType type = 1;
+  int64 time_cost = 2;  // 该地面任务默认的时间开销
+  int64 monetary_price = 3; // 该地面任务默认的金钱开销
+  oneof args {
+    BoxType box_type = 4;
+    DroneType drone_type = 5;
+  }
+}
+
+// A-UTM
+message PrepareReserveAirportResourceRequest {
+  string reservation_id = 1;  // 这次请求的会话ID
+  string airport_id = 2;   // A-UTM分配的UUID
+  string drone_id = 3;     // A-UTM分配的UUID
+  google.protobuf.Timestamp estimated_arrive_at = 4; // 飞机预计到达时间
+  repeated GroundMission ground_mission = 5; // 此次行程期望执行的地面任务
+}
+
+message RealTimeRunway {
+  string id = 1; // A-UTM分配的UUID
+  repeated string limited_leaving_runway_id = 4; // 当前情况下，此跑道可以从哪些跑道起飞
+  repeated GroundMissionType current_supported_ground_mission = 3; // 当前情况下，此跑道支持的地面任务列表
+}
+
+// A-UTM
+message PrepareReserveAirportResourceResponse {
+  message SuccessContext {
+    repeated RealTimeRunway valid_land_runway = 3; // 预占成功的情况下，可用的降落跑道
+    repeated google.protobuf.Timestamp estimated_ground_mission_finished_at = 4; // 预占成功的情况下，每个降落跑道对应的地面任务预计完成时间
+  }
+  message FailureContext {
+      int32 failed_reason = 5;
+      repeated google.protobuf.Timestamp estimated_next_valid_land_time = 6; // 预占失败的情况下，机场系统预估的下一个可以降落的时间点
+  }
+  int32 code = 1;
+  string reservation_id = 2; // 这次请求的会话ID
+  oneof response_context {
+    SuccessContext success_context = 3;
+    FailureContext failure_context = 4;
+  }
+}
+
+message CommitReserveAirportResourceRequest {
+  string reservation_id = 1; // 这次请求的会话ID
+  string land_runway_id = 2; // A-UTM确认选择的降落跑道
+  string prefer_leaving_runway_id = 3; // A-UTM期望的最佳起飞跑道
+}
+
+message CommitReserveAirportResourceResponse {
+  int32 code = 1;
+  string reservation_id = 2; // 这次请求的会话ID
+}
+
+message RollbackReserveAirportResourceRequest {
+  string reservation_id = 1; // 这次请求的会话ID
+}
+
+message RollbackReserveAirportResourceResponse {
+  int32 code = 1;
+  string reservation_id = 2; // 这次请求的会话ID
+}
+
+message ReleaseAirportResourceRequest {
+  string reservation_id = 1; // 这次请求的会话ID
+}
+
+message ReleaseAirportResourceResponse {
+  int32 code = 1;
+  string reservation_id = 2; // 这次请求的会话ID
+}
+
+message QueryGroundMissionETARequest {
+  string trip_id = 1;
+}
+
+message QueryGroundMissionETAResponse {
+  int32 code = 1;
+  repeated GroundMissionType remained_ground_mission = 2; // 当前trip剩余还没有做完的地面任务列表
+  google.protobuf.Timestamp estimated_finished_at = 3; // 剩余的地面任务预计在什么时刻做完
+}
+
+service AirportAUTMService {
+  rpc prepareReserveAirportResource(PrepareReserveAirportResourceRequest)
+      returns (PrepareReserveAirportResourceResponse);
+  rpc commitReserveAirportResource(CommitReserveAirportResourceRequest)
+      returns (CommitReserveAirportResourceResponse);
+  rpc rollbackReserveAirportResource(RollbackReserveAirportResourceRequest)
+      returns (RollbackReserveAirportResourceResponse);
+  rpc releaseAirportResource(ReleaseAirportResourceRequest)
+      returns (ReleaseAirportResourceResponse);
+  rpc queryGroundMissionETA(QueryGroundMissionETARequest) returns (QueryGroundMissionETAResponse);
+}
+
+message TripEvent {
+  enum Event {
+    UNKNOWN = 0;
+    NEW = 1;
+    UPDATE = 2;
+    CANCEL = 3; // 行程取消事件
+  }
+  message RelatedField {
+    repeated string field = 1; // 用来提醒机场系统trip中的哪些字段发生了变更
+  }
+  string trip_id = 1;
+  Event event = 2;
+  oneof args {
+    RelatedField related_field = 3;
+  }
+}
+
+message WaybillEvent {
+  enum Event {
+    UNKNOWN = 0;
+    NEW = 1;
+    UPDATE = 2;
+    CANCEL = 3; // 运单取消事件
+  }
+  message RelatedField {
+    repeated string field = 1; // 用来提醒机场系统运单中的哪些字段发生了变更
+  }
+  string waybill_id = 1;
+  Event event = 2;
+  oneof args {
+    RelatedField related_field = 3;
+  }
+}
+
+message TripEvents {
+  repeated TripEvent trip_event = 1;
+}
+
+message WaybillEvents {
+  repeated WaybillEvent waybill_event = 2;
+}
+
+service AirportTripService {
+  rpc onTripEvent(TripEvent) returns (google.protobuf.Empty);
+  rpc onTripEvents(TripEvents) returns (google.protobuf.Empty);
+  rpc onWaybillEvent(WaybillEvent) returns (google.protobuf.Empty);
+  rpc onWaybillEvents(WaybillEvents) returns (google.protobuf.Empty);
+}
