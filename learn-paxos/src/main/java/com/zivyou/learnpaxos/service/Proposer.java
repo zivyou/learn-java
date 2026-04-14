@@ -50,18 +50,58 @@ public class Proposer {
                 log.info("onPrepareResponse: currentProposals does not contains {}", proposal.getKey());
                 return;
             }
+
+            // 计数收到的响应
             currentProposalPrepareResponded.put(proposal.getKey(), currentProposalPrepareResponded.getOrDefault(proposal.getKey(),0)+1);
             log.info("onPrepareResponse: currentProposalPrepareRespondedCount: {}", currentProposalPrepareResponded.get(proposal.getKey()));
+
+            // 记录Acceptor返回的已接受value（如果有）
+            // 如果responseId != null，说明Acceptor之前已accept过某个value
+            if (proposal.getResponseId() != null) {
+                Proposal currentAccepted = acceptedProposals.get(proposal.getKey());
+                // 只记录最大的responseId对应的value
+                if (currentAccepted == null || proposal.getResponseId() > currentAccepted.getRequestId()) {
+                    acceptedProposals.put(proposal.getKey(), proposal);
+                    log.info("onPrepareResponse: 记录已接受的value - key: {}, value: {}, responseId: {}",
+                        proposal.getKey(), proposal.getValue(), proposal.getResponseId());
+                }
+            }
+
+            // 检测冲突：如果有更大的responseId，重新开始
+            // 注意：这里使用的是当前收到的responseId与原始requestId比较
             if (proposal.getResponseId() != null && proposal.getResponseId() > currentProposals.get(proposal.getKey()).getRequestId()) {
-                // responseId > requestId: 说明有其他proposer发布了更早的提案，我们应该放弃当前的提案，重新prepare一次；
-                var key=proposal.getKey(); var value=proposal.getValue();
-                currentProposals.remove(proposal.getKey());
-                currentProposalPrepareResponded.remove(proposal.getKey());
-                propose(key,value);
+                // responseId > requestId: 说明有其他proposer发布了更大的proposal，我们应该放弃当前的提案，重新prepare一次
+                // 重新提议时，应该使用已接受的value（如果有）
+                var key = proposal.getKey();
+                var value = proposal.getValue(); // proposal.getValue()已经是Acceptor返回的已接受value
+                log.info("onPrepareResponse: 发现更大的proposal number，重新开始 - key: {}, oldRequestId: {}, newResponseId: {}, value: {}",
+                    key, currentProposals.get(key).getRequestId(), proposal.getResponseId(), value);
+                currentProposals.remove(key);
+                currentProposalPrepareResponded.remove(key);
+                acceptedProposals.remove(key);
+                propose(key, value);
                 return;
             }
+
+            // 收到多数派响应，进入Accept阶段
             if (currentProposalPrepareResponded.get(proposal.getKey())*2 > acceptorAmount) {
-                publishAcceptRequest(currentProposals.get(proposal.getKey()));
+                // 选择要accept的value：如果有已接受的value，使用它；否则使用原始value
+                String valueToAccept;
+                if (acceptedProposals.containsKey(proposal.getKey())) {
+                    valueToAccept = acceptedProposals.get(proposal.getKey()).getValue();
+                    log.info("onPrepareResponse: 使用已接受的value - key: {}, value: {}", proposal.getKey(), valueToAccept);
+                } else {
+                    valueToAccept = currentProposals.get(proposal.getKey()).getValue();
+                    log.info("onPrepareResponse: 使用原始value - key: {}, value: {}", proposal.getKey(), valueToAccept);
+                }
+                // 创建新的proposal用于accept，使用正确的value
+                var acceptProposal = new Proposal(
+                    currentProposals.get(proposal.getKey()).getRequestId(),
+                    proposal.getKey(),
+                    valueToAccept,
+                    null
+                );
+                publishAcceptRequest(acceptProposal);
             }
         };
     }

@@ -103,7 +103,10 @@ public class Acceptor {
         var message = proposal.toString();
         executorService.execute(() -> {
             try {
+                // 发送Accepted响应给Proposer（用于Proposer确认）
                 mqttPublishClient.publish(MqttTopics.PROPOSAL_ACCEPT_RESPONSE, message.getBytes(), 0, false);
+                // 发送Accepted通知给Learner（用于Learner决定chosen）
+                mqttPublishClient.publish(MqttTopics.ACCEPTOR_ACCEPTED, message.getBytes(), 0, false);
             } catch (MqttException e) {
                 log.error("Acceptor: responseAccept failed", e);
             }
@@ -113,14 +116,14 @@ public class Acceptor {
     public void receiveAcceptRequest(Proposal proposal) {
         log.info("Acceptor: receiveAccept: {}", proposal);
         if (!maxProposals.containsKey(proposal.getKey()) || proposal.getRequestId() < maxProposals.get(proposal.getKey()).getRequestId()) {
-
-          return;
+            log.info("Acceptor: reject accept - proposal number too small: {} < {}",
+                proposal.getRequestId(),
+                maxProposals.get(proposal.getKey()).getRequestId());
+            return;  // 拒绝，不发送响应
         } else {
             acceptedProposals.put(proposal.getKey(), proposal);
-            log.info("??????????????????????????????????????????????????????????????????");
-            responseAccept(proposal);
-            // 记录下最终数值，并通知listener;
-            dataMap.put(proposal.getKey(), proposal.getValue());
+            responseAccept(proposal);  // 发送Accepted响应给Proposer和Learner
+            // 注意：Acceptor不直接写入DataMap，由Learner决定何时chosen并写入
         }
     }
 }
