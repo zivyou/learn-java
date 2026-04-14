@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.concurrent.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,9 +29,14 @@ public class Proposer {
     private final Map<String, Integer> currentProposalAcceptResponded = new ConcurrentHashMap<>();
     private final Map<String, Integer> currentProposalRejectResponded = new ConcurrentHashMap<>();
     private final Map<String, Proposal> acceptedProposals = new ConcurrentHashMap<>();
+    // 存储每个key的Accept超时任务，用于在获得多数派时取消超时
+    private final Map<String, ScheduledFuture<?>> acceptTimeoutTasks = new ConcurrentHashMap<>();
     @Value("${paxos.acceptor-amount}")
     private Integer acceptorAmount;
+    @Value("${paxos.accept-timeout-ms:5000}")
+    private Long acceptTimeoutMs;
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
+    private final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(5);
 
     @PostConstruct
     void init() throws MqttException {
@@ -67,21 +73,9 @@ public class Proposer {
                 }
             }
 
-            // 检测冲突：如果有更大的responseId，重新开始
-            // 注意：这里使用的是当前收到的responseId与原始requestId比较
-            if (proposal.getResponseId() != null && proposal.getResponseId() > currentProposals.get(proposal.getKey()).getRequestId()) {
-                // responseId > requestId: 说明有其他proposer发布了更大的proposal，我们应该放弃当前的提案，重新prepare一次
-                // 重新提议时，应该使用已接受的value（如果有）
-                var key = proposal.getKey();
-                var value = proposal.getValue(); // proposal.getValue()已经是Acceptor返回的已接受value
-                log.info("onPrepareResponse: 发现更大的proposal number，重新开始 - key: {}, oldRequestId: {}, newResponseId: {}, value: {}",
-                    key, currentProposals.get(key).getRequestId(), proposal.getResponseId(), value);
-                currentProposals.remove(key);
-                currentProposalPrepareResponded.remove(key);
-                acceptedProposals.remove(key);
-                propose(key, value);
-                return;
-            }
+            // 注意：Basic Paxos中，Prepare阶段不需要检测冲突
+            // responseId > requestId 只是说明Acceptor之前accept过value，不是冲突
+            // 真正的冲突会在Accept阶段体现（Accept被拒绝）
 
             // 收到多数派响应，进入Accept阶段
             if (currentProposalPrepareResponded.get(proposal.getKey())*2 > acceptorAmount) {
@@ -107,12 +101,53 @@ public class Proposer {
     }
 
     private void publishAcceptRequest(Proposal proposal) {
+        String key = proposal.getKey();
         String data = proposal.toString();
         byte[] message = data.getBytes();
         log.info("Proposer: publishAcceptRequest {}", proposal);
+
         executorService.execute(() -> {
             try {
                 mqttPublishClient.publish(MqttTopics.PROPOSAL_ACCEPT_REQUEST, message, 0, false);
+
+                // 设置超时定时器
+                ScheduledFuture<?> timeoutTask = scheduledExecutorService.schedule(() -> {
+                    log.info("Proposer: accept timeout - key: {}, requestId: {}", key, proposal.getRequestId());
+
+                    // 检查是否已经获得多数派（可能竞态）
+                    Integer acceptedAmount = currentProposalAcceptResponded.get(key);
+                    if (acceptedAmount != null && acceptedAmount > acceptorAmount / 2) {
+                        // 已经获得多数派，超时任务被延迟执行，忽略
+                        log.debug("Proposer: timeout triggered but value already chosen - key: {}", key);
+                        return;
+                    }
+
+                    // 未获得多数派，重新提议
+                    if (currentProposals.containsKey(key)) {
+                        String value = currentProposals.get(key).getValue();
+                        Long oldRequestId = currentProposals.get(key).getRequestId();
+
+                        log.info("Proposer: retrying after timeout - key: {}, oldRequestId: {}, value: {}", key, oldRequestId, value);
+
+                        // 清理当前状态
+                        currentProposals.remove(key);
+                        currentProposalAcceptResponded.remove(key);
+                        currentProposalPrepareResponded.remove(key);
+                        acceptedProposals.remove(key);
+                        acceptTimeoutTasks.remove(key);
+
+                        // 用更大的number重新提议
+                        propose(key, value);
+                    } else {
+                        // 可能已经获得多数派并被清理了，忽略
+                        log.debug("Proposer: timeout triggered but proposal already cleaned - key: {}", key);
+                        acceptTimeoutTasks.remove(key);
+                    }
+                }, acceptTimeoutMs, TimeUnit.MILLISECONDS);
+
+                // 存储超时任务，以便在获得多数派时取消
+                acceptTimeoutTasks.put(key, timeoutTask);
+
             } catch (MqttException e) {
                 log.error("Proposer: publishAcceptRequest failed", e);
             }
@@ -128,24 +163,45 @@ public class Proposer {
                 return;
             };
             log.info("Proposer: onAcceptResponse {}", proposal);
-            if (proposal.getRequestId() > currentProposals.get(proposal.getKey()).getRequestId()) {
-                currentProposalAcceptResponded.put(proposal.getKey(), currentProposalAcceptResponded.getOrDefault(proposal.getKey(), 0) + 1);
-            } else {
-                currentProposalRejectResponded.put(proposal.getKey(), currentProposalRejectResponded.getOrDefault(proposal.getKey(), 0) + 1);
-            }
 
-            var acceptedAmount = currentProposalAcceptResponded.get(proposal.getKey());
-            var rejectedAmount = currentProposalRejectResponded.get(proposal.getKey());
-            if ((acceptedAmount+rejectedAmount) >= acceptorAmount) {
+            // 检查收到的响应是否与当前proposal匹配
+            if (proposal.getRequestId().equals(currentProposals.get(proposal.getKey()).getRequestId())) {
+                // 收到的响应与当前proposal匹配，计为accept
+                currentProposalAcceptResponded.put(proposal.getKey(), currentProposalAcceptResponded.getOrDefault(proposal.getKey(), 0) + 1);
+
+                var acceptedAmount = currentProposalAcceptResponded.get(proposal.getKey());
+                log.info("Proposer: accept count - key: {}, accepted: {}, majority: {}",
+                    proposal.getKey(), acceptedAmount, acceptorAmount / 2);
+
+                // 如果收到多数派accept，value is chosen
                 if (acceptedAmount > acceptorAmount / 2) {
-                    // value is chosen
-                    log.info("Proposer: value is chosen: {}", currentProposals.get(proposal.getKey()).getValue());
-                    currentProposals.remove(proposal.getKey());
-                } else {
-                    // value is not chosen
-                    log.info("Proposer: value is not chosen: {}", currentProposals.get(proposal.getKey()).getValue());
-//                    propose(proposal.getKey(), currentProposals.get(proposal.getKey()).getValue());
+                    String key = proposal.getKey();
+                    String value = currentProposals.get(key).getValue();
+                    log.info("Proposer: value is chosen - key: {}, value: {}, accepted: {}",
+                        key, value, acceptedAmount);
+
+                    // 取消超时任务
+                    ScheduledFuture<?> timeoutTask = acceptTimeoutTasks.remove(key);
+                    if (timeoutTask != null) {
+                        timeoutTask.cancel(false);
+                        log.debug("Proposer: cancelled accept timeout task - key: {}", key);
+                    }
+
+                    // 清理所有状态
+                    currentProposals.remove(key);
+                    currentProposalAcceptResponded.remove(key);
+                    currentProposalPrepareResponded.remove(key);
+                    acceptedProposals.remove(key);
+                    // currentProposalRejectResponded 不再使用，但保留以避免潜在的NPE
                 }
+                // 注意：如果未获得多数派accept，Proposer等待超时
+                // 超时逻辑需要额外实现（使用ScheduledExecutorService）
+            } else {
+                // 收到的响应与当前proposal不匹配（可能是更大的number）
+                // 说明有冲突，当前proposal可能已经无效
+                log.info("Proposer: received mismatched response - key: {}, currentRequestId: {}, receivedRequestId: {}",
+                    proposal.getKey(), currentProposals.get(proposal.getKey()).getRequestId(), proposal.getRequestId());
+                // 可以在这里触发重新提议，但更可靠的方式是等待超时
             }
         };
     }

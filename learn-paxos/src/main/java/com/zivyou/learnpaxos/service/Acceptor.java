@@ -121,6 +121,11 @@ public class Acceptor {
                 maxProposals.get(proposal.getKey()).getRequestId());
             return;  // 拒绝，不发送响应
         } else {
+            var acceptedProposal = acceptedProposals.get(proposal.getKey());
+            if (acceptedProposal != null && acceptedProposal.getRequestId().equals(proposal.getRequestId()) && acceptedProposal.getValue().equals(proposal.getValue())) {
+                // 网络延迟导致的重复accept请求，可以直接忽略
+                return;
+            }
             acceptedProposals.put(proposal.getKey(), proposal);
             responseAccept(proposal);  // 发送Accepted响应给Proposer和Learner
             // 注意：Acceptor不直接写入DataMap，由Learner决定何时chosen并写入

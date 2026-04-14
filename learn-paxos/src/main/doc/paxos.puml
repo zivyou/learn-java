@@ -1,0 +1,234 @@
+@startuml Basic Paxos 完整时序图
+skinparam backgroundColor #FEFEFE
+skinparam handwritten false
+skinparam sequenceMessageAlign center
+skinparam noteBackgroundColor #FEFCE8
+skinparam noteBorderColor #EAB308
+
+actor Client as "Client"
+participant Proposer as "Proposer"
+participant MQTT as "MQTT\nBroker"
+participant Acceptor1 as "Acceptor 1"
+participant Acceptor2 as "Acceptor 2"
+participant Acceptor3 as "Acceptor 3"
+participant Learner as "Learner"
+participant DataMap as "DataMap"
+
+== 初始化 ==
+note over Proposer, Learner
+  @PostConstruct
+  - Proposer 订阅: PROPOSAL_PREPARE_RESPONSE, PROPOSAL_ACCEPT_RESPONSE
+  - Acceptor 订阅: PROPOSAL_PREPARE_REQUEST, PROPOSAL_ACCEPT_REQUEST
+  - Learner 订阅: ACCEPTOR_ACCEPTED
+end note
+
+== Phase 1: Prepare阶段 ==
+
+Client -> Proposer: propose(key="k", value="v1")
+activate Proposer
+
+Proposer -> Proposer: proposalId = currentTimeMillis()
+Proposer -> Proposer: currentProposals[key] = (n, "k", "v1", null)
+Proposer -> Proposer: prepareResponded[key] = 0
+
+Proposer -> MQTT: PROPOSAL_PREPARE_REQUEST\n(n, "k", "v1", null)
+note right: QoS 0 (不保证送达)
+
+par 处理所有Acceptor的Prepare请求
+    MQTT -> Acceptor1: PROPOSAL_PREPARE_REQUEST
+    activate Acceptor1
+    Acceptor1 -> Acceptor1: receivePrepare()
+
+    alt maxProposals 不包含 key 或 requestId 更大
+        Acceptor1 -> Acceptor1: maxProposals[key] = (n, "k", "v1", null)
+
+        alt 已accept过value
+            Acceptor1 -> Acceptor1: 返回 (n, "k", acceptedValue, acceptedN)
+        else 未accept过
+            Acceptor1 -> Acceptor1: setResponseId(n)
+        end
+
+        Acceptor1 -> MQTT: PROPOSAL_PREPARE_RESPONSE\n(n, "k", value, responseId)
+    else requestId 太小
+        note right: 拒绝，不响应
+    end
+    deactivate Acceptor1
+
+    MQTT -> Acceptor2: PROPOSAL_PREPARE_REQUEST
+    activate Acceptor2
+    Acceptor2 -> Acceptor2: receivePrepare()
+    Acceptor2 -> Acceptor2: 假设未accept过
+    Acceptor2 -> MQTT: PROPOSAL_PREPARE_RESPONSE\n(n, "k", "v1", n)
+    deactivate Acceptor2
+
+    MQTT -> Acceptor3: PROPOSAL_PREPARE_REQUEST
+    activate Acceptor3
+    Acceptor3 -> Acceptor3: receivePrepare()
+    Acceptor3 -> MQTT: PROPOSAL_PREPARE_RESPONSE\n(n, "k", "v1", n)
+    deactivate Acceptor3
+end
+
+Proposer <- MQTT: PROPOSAL_PREPARE_RESPONSE (来自 Acceptor1)
+activate Proposer
+Proposer -> Proposer: onPrepareResponse()
+Proposer -> Proposer: prepareResponded[key]++
+Proposer -> Proposer: 检查 responseId != null
+
+alt responseId != null (Acceptor之前accept过)
+    Proposer -> Proposer: 记录已接受的value\nacceptedProposals[key] = (responseId, key, value, responseId)
+
+    alt responseId > 当前已记录的
+        Proposer -> Proposer: 更新为更大的
+    end
+end
+
+Proposer <- MQTT: PROPOSAL_PREPARE_RESPONSE (来自 Acceptor2)
+Proposer -> Proposer: onPrepareResponse()
+Proposer -> Proposer: prepareResponded[key]++
+
+Proposer <- MQTT: PROPOSAL_PREPARE_RESPONSE (来自 Acceptor3)
+Proposer -> Proposer: onPrepareResponse()
+Proposer -> Proposer: prepareResponded[key]++
+
+Proposer -> Proposer: 检查 prepareResponded * 2 > acceptorAmount
+note right: 3 * 2 > 3 ? 6 > 3 ✅
+
+Proposer -> Proposer: 选择要accept的value
+alt acceptedProposals 包含 key
+    Proposer -> Proposer: 使用已接受的value
+else 无已接受的value
+    Proposer -> Proposer: 使用原始value "v1"
+end
+
+Proposer -> Proposer: 创建 acceptProposal\n(n, "k", "v1", null)
+deactivate Proposer
+
+== Phase 2: Accept阶段 ==
+
+Proposer -> MQTT: PROPOSAL_ACCEPT_REQUEST\n(n, "k", "v1", null)
+activate Proposer
+
+Proposer -> Proposer: 启动超时定时器\n(acceptTimeoutMs = 5000ms)
+note right: 存储超时任务到\nacceptTimeoutTasks[key]
+
+par 处理所有Acceptor的Accept请求
+    MQTT -> Acceptor1: PROPOSAL_ACCEPT_REQUEST
+    activate Acceptor1
+    Acceptor1 -> Acceptor1: receiveAcceptRequest()
+
+    alt requestId < maxProposals[key].requestId
+        note right: 拒绝，不响应
+    else requestId >= maxProposals[key].requestId
+        alt 重复请求 (requestId和value都相同)
+            note right: 幂等处理，忽略
+        else 新的accept
+            Acceptor1 -> Acceptor1: acceptedProposals[key] = (n, "k", "v1", null)
+            Acceptor1 -> MQTT: PROPOSAL_ACCEPT_RESPONSE\n(n, "k", "v1", null)
+            Acceptor1 -> MQTT: ACCEPTOR_ACCEPTED\n(n, "k", "v1", null)
+        end
+    end
+    deactivate Acceptor1
+
+    MQTT -> Acceptor2: PROPOSAL_ACCEPT_REQUEST
+    activate Acceptor2
+    Acceptor2 -> Acceptor2: receiveAcceptRequest()
+    Acceptor2 -> MQTT: PROPOSAL_ACCEPT_RESPONSE\n(n, "k", "v1", null)
+    Acceptor2 -> MQTT: ACCEPTOR_ACCEPTED\n(n, "k", "v1", null)
+    deactivate Acceptor2
+
+    MQTT -> Acceptor3: PROPOSAL_ACCEPT_REQUEST
+    activate Acceptor3
+    Acceptor3 -> Acceptor3: receiveAcceptRequest()
+    Acceptor3 -> MQTT: PROPOSAL_ACCEPT_RESPONSE\n(n, "k", "v1", null)
+    Acceptor3 -> MQTT: ACCEPTOR_ACCEPTED\n(n, "k", "v1", null)
+    deactivate Acceptor3
+end
+
+== Proposer处理Accept响应 ==
+
+Proposer <- MQTT: PROPOSAL_ACCEPT_RESPONSE (来自 Acceptor1)
+activate Proposer
+Proposer -> Proposer: onAcceptResponse()
+Proposer -> Proposer: 检查 requestId 是否匹配
+
+alt requestId 匹配
+    Proposer -> Proposer: acceptResponded[key]++
+    Proposer -> Proposer: 检查 acceptResponded > acceptorAmount / 2
+    note right: 1 > 1? ❌
+else requestId 不匹配
+    note right: 说明有冲突\n等待超时
+end
+deactivate Proposer
+
+Proposer <- MQTT: PROPOSAL_ACCEPT_RESPONSE (来自 Acceptor2)
+activate Proposer
+Proposer -> Proposer: acceptResponded[key]++ (2)
+Proposer -> Proposer: 检查 acceptResponded > acceptorAmount / 2
+note right: 2 > 1? ✅ 多数派!
+
+Proposer -> Proposer: value is chosen!
+Proposer -> Proposer: 取消超时任务\nacceptTimeoutTasks.remove(key).cancel()
+
+Proposer -> Proposer: 清理所有状态\n- currentProposals.remove(key)\n- acceptResponded.remove(key)\n- prepareResponded.remove(key)\n- acceptedProposals.remove(key)
+deactivate Proposer
+
+Proposer <- MQTT: PROPOSAL_ACCEPT_RESPONSE (来自 Acceptor3)
+activate Proposer
+Proposer -> Proposer: onAcceptResponse()
+Proposer -> Proposer: currentProposals 不包含 key\n忽略
+deactivate Proposer
+
+== Learner学习阶段 ==
+
+par Learner处理所有Acceptor的Accepted通知
+    MQTT -> Learner: ACCEPTOR_ACCEPTED (来自 Acceptor1)
+    activate Learner
+    Learner -> Learner: onAccepted()
+    Learner -> Learner: handleAccepted()
+
+    alt key 已被chosen
+        note right: 忽略
+    else key 未被chosen
+        Learner -> Learner: acceptedCounts[key]["v1"] = 1
+        Learner -> Learner: 检查 count > acceptorAmount / 2
+        note right: 1 > 1? ❌
+    end
+    deactivate Learner
+
+    MQTT -> Learner: ACCEPTOR_ACCEPTED (来自 Acceptor2)
+    activate Learner
+    Learner -> Learner: acceptedCounts[key]["v1"] = 2
+    Learner -> Learner: 检查 count > acceptorAmount / 2
+    note right: 2 > 1? ✅ 多数派!
+
+    Learner -> Learner: value chosen: "v1"
+    Learner -> Learner: chosenValues[key] = "v1"
+    Learner -> DataMap: put(key, "v1")
+    Learner -> Learner: acceptedCounts.remove(key)
+    deactivate Learner
+
+    MQTT -> Learner: ACCEPTOR_ACCEPTED (来自 Acceptor3)
+    activate Learner
+    Learner -> Learner: onAccepted()
+    Learner -> Learner: chosenValues 包含 key\n忽略
+    deactivate Learner
+end
+
+== 超时场景（未获得多数派）==
+
+note over Proposer
+  假设只收到1个accept响应
+  超时定时器触发
+end note
+
+Proposer -> Proposer: onTimeout()
+Proposer -> Proposer: 检查 acceptResponded > acceptorAmount / 2
+note right: 1 > 1? ❌ 未获得多数派
+
+Proposer -> Proposer: 检查 currentProposals 包含 key
+Proposer -> Proposer: 清理当前状态
+Proposer -> Proposer: acceptTimeoutTasks.remove(key)
+Proposer -> Proposer: propose(key, "v1")\n使用新的更大的number
+note right: 重新开始Phase 1
+
+@enduml
