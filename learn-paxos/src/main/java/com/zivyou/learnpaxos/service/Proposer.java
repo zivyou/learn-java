@@ -27,6 +27,7 @@ public class Proposer {
     private final Map<String, Integer> currentProposalPrepareResponded = new ConcurrentHashMap<>();
     private final Map<String, Integer> currentProposalAcceptResponded = new ConcurrentHashMap<>();
     private final Map<String, Integer> currentProposalRejectResponded = new ConcurrentHashMap<>();
+    private final Map<String, Proposal> acceptedProposals = new ConcurrentHashMap<>();
     @Value("${paxos.acceptor-amount}")
     private Integer acceptorAmount;
     private final ExecutorService executorService = Executors.newFixedThreadPool(10);
@@ -49,16 +50,15 @@ public class Proposer {
                 log.info("onPrepareResponse: currentProposals does not contains {}", proposal.getKey());
                 return;
             }
-            if (!proposal.getResponseId().equals(currentProposals.get(proposal.getKey()).getRequestId())) {
-                log.info("onPrepareResponse: responseId not match: {}, {}", proposal.getResponseId(), currentProposals.get(proposal.getKey()));
-                return;
-            };
-            currentProposalPrepareResponded.put(proposal.getKey(), currentProposalPrepareResponded.get(proposal.getKey())+1);
+            currentProposalPrepareResponded.put(proposal.getKey(), currentProposalPrepareResponded.getOrDefault(proposal.getKey(),0)+1);
             log.info("onPrepareResponse: currentProposalPrepareRespondedCount: {}", currentProposalPrepareResponded.get(proposal.getKey()));
-            if (proposal.getResponseId() >= currentProposals.get(proposal.getKey()).getRequestId()) {
-                currentProposals.put(proposal.getKey(), proposal);
-                // 发现被别人婉拒了，就成全别人的proposal
-                currentProposals.get(proposal.getKey()).setRequestId(proposal.getResponseId());
+            if (proposal.getResponseId() != null && proposal.getResponseId() > currentProposals.get(proposal.getKey()).getRequestId()) {
+                // responseId > requestId: 说明有其他proposer发布了更早的提案，我们应该放弃当前的提案，重新prepare一次；
+                var key=proposal.getKey(); var value=proposal.getValue();
+                currentProposals.remove(proposal.getKey());
+                currentProposalPrepareResponded.remove(proposal.getKey());
+                propose(key,value);
+                return;
             }
             if (currentProposalPrepareResponded.get(proposal.getKey())*2 > acceptorAmount) {
                 publishAcceptRequest(currentProposals.get(proposal.getKey()));

@@ -82,10 +82,12 @@ public class Acceptor {
         if (!maxProposals.containsKey(proposal.getKey()) || maxProposals.get(proposal.getKey()).getRequestId() < proposal.getRequestId()) {
             maxProposals.put(proposal.getKey(), proposal);
             if (acceptedProposals.containsKey(proposal.getKey())) {
+                var acceptedProposal = acceptedProposals.get(proposal.getKey());
                 responsePrepare(
                         new Proposal(
                                 proposal.getRequestId(), proposal.getKey(),
-                            proposal.getValue(), acceptedProposals.get(proposal.getKey()).getRequestId()
+                                acceptedProposal.getValue(),
+                                acceptedProposal.getRequestId()
                         )
                 );
             } else {
@@ -110,7 +112,7 @@ public class Acceptor {
 
     public void receiveAcceptRequest(Proposal proposal) {
         log.info("Acceptor: receiveAccept: {}", proposal);
-        if (proposal.getRequestId() < maxProposals.get(proposal.getKey()).getRequestId()) {
+        if (!maxProposals.containsKey(proposal.getKey()) || proposal.getRequestId() < maxProposals.get(proposal.getKey()).getRequestId()) {
 
           return;
         } else {
