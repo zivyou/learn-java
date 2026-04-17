@@ -1,41 +1,39 @@
 package com.zivyou.h2odemo;
 
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 
-public class H2O {
+public class H2OCountDownLatch {
     private final Semaphore oxygenSemaphore = new Semaphore(1);
     private final Semaphore hydrogenSemaphore = new Semaphore(2);
-    private final CyclicBarrier barrier = new CyclicBarrier(3);
+    private CountDownLatch latch = new CountDownLatch(3);
 
-    public H2O() {
+    public H2OCountDownLatch() {
+    }
 
+    private synchronized void resetLatch() {
+        if (latch.getCount() == 0) {
+            latch = new CountDownLatch(3);
+            oxygenSemaphore.release();
+            hydrogenSemaphore.release(2);
+        }
     }
 
     public void hydrogen(Runnable releaseHydrogen) throws InterruptedException {
         hydrogenSemaphore.acquire();
         // releaseHydrogen.run() outputs "H". Do not change or remove this line.
         releaseHydrogen.run();
-        try {
-            barrier.await();
-        } catch (BrokenBarrierException e) {
-            throw new RuntimeException(e);
-        } finally {
-            hydrogenSemaphore.release();
-        }
+        latch.countDown();
+        latch.await();
+        resetLatch();
     }
 
     public void oxygen(Runnable releaseOxygen) throws InterruptedException {
         oxygenSemaphore.acquire();
         // releaseOxygen.run() outputs "O". Do not change or remove this line.
         releaseOxygen.run();
-        try {
-            barrier.await();
-        } catch (BrokenBarrierException e) {
-            throw new RuntimeException(e);
-        } finally {
-            oxygenSemaphore.release();
-        }
+        latch.countDown();
+        latch.await();
+        resetLatch();
     }
 }
