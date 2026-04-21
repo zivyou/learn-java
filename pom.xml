@@ -10,6 +10,7 @@
     <version>1.0-SNAPSHOT</version>
     <modules>
         <module>common</module>
+        <module>algorithm</module>
         <module>learn-annotation</module>
         <module>learn-command-pattern</module>
         <module>learn-concurrent-lib</module>
